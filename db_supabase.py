@@ -131,21 +131,35 @@ def save_dataframe_to_supabase(df: pd.DataFrame, table_name: str, if_exists: str
 def upload_excel_dict_to_supabase(excel_data_dict: dict) -> bool:
     """
     Envia todas as abas de um dicionário de DataFrames Excel para tabelas separadas no Supabase.
+    Exibe barra de progresso visual durante o envio.
     """
     engine = get_db_engine()
     if engine is None:
         return False
 
     success = True
-    for sheet_name, df in excel_data_dict.items():
-        # Limpa o nome da aba para ser compatível com tabela SQL
-        clean_table_name = sheet_name.strip().lower().replace(" ", "_")
+    valid_sheets = {k: v for k, v in excel_data_dict.items() if v is not None and not v.empty}
+    total_sheets = len(valid_sheets)
+    if total_sheets == 0:
+        st.warning("Nenhuma aba com dados encontrada para salvar.")
+        return False
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for idx, (sheet_name, df) in enumerate(valid_sheets.items(), start=1):
+        clean_table_name = sheet_name.strip().lower().replace(" ", "_").replace("+", "_")
         clean_table_name = "".join(c for c in clean_table_name if c.isalnum() or c == "_")
         
+        status_text.markdown(f"⏳ **Enviando aba {idx}/{total_sheets}**: `{sheet_name}` ➔ `{clean_table_name}`")
         ok = save_dataframe_to_supabase(df, clean_table_name, if_exists="replace")
         if not ok:
             success = False
 
+        progress_bar.progress(idx / total_sheets)
+
+    status_text.success("🎉 Todas as abas foram enviadas para o Supabase!")
+    progress_bar.empty()
     return success
 
 
@@ -161,6 +175,7 @@ def load_all_sheets_from_supabase() -> dict:
     table_mapping = {
         "segreg_por_município": "Segreg por município",
         "segreg_por_municipio": "Segreg por município",
+        "resumo_segregado": "Segreg por município",
         "volumes_por_município": "Volumes por município",
         "volumes_por_municipio": "Volumes por município",
         "abastecimento": "Abastecimento",
@@ -187,4 +202,5 @@ def load_all_sheets_from_supabase() -> dict:
     except Exception as e:
         st.error(f"Erro ao recuperar tabelas do Supabase: {e}")
         return {}
+
 
