@@ -109,8 +109,7 @@ def load_table_from_supabase(table_name: str) -> pd.DataFrame:
 
 def save_dataframe_to_supabase(df: pd.DataFrame, table_name: str, if_exists: str = "replace") -> bool:
     """
-    Salva um DataFrame pandas como uma tabela no Supabase.
-    `if_exists`: 'fail', 'replace' ou 'append'.
+    Salva um DataFrame pandas como uma tabela no Supabase em lotes (chunksize) para evitar timeout.
     """
     engine = get_db_engine()
     if engine is None:
@@ -118,9 +117,9 @@ def save_dataframe_to_supabase(df: pd.DataFrame, table_name: str, if_exists: str
         return False
 
     try:
-        # Normaliza nomes de colunas para minúsculas sem espaços para convenção SQL
         df_to_save = df.copy()
-        df_to_save.to_sql(table_name, engine, if_exists=if_exists, index=False, method="multi")
+        # Usa chunksize=500 para evitar timeout de declarações no PostgreSQL
+        df_to_save.to_sql(table_name, engine, if_exists=if_exists, index=False, chunksize=500)
         st.success(f"Tabela '{table_name}' salva no Supabase com sucesso!")
         return True
     except Exception as e:
@@ -130,15 +129,28 @@ def save_dataframe_to_supabase(df: pd.DataFrame, table_name: str, if_exists: str
 
 def upload_excel_dict_to_supabase(excel_data_dict: dict) -> bool:
     """
-    Envia todas as abas de um dicionário de DataFrames Excel para tabelas separadas no Supabase.
+    Envia as abas essenciais de um dicionário de DataFrames Excel para tabelas separadas no Supabase.
     Exibe barra de progresso visual durante o envio.
     """
     engine = get_db_engine()
     if engine is None:
         return False
 
-    success = True
-    valid_sheets = {k: v for k, v in excel_data_dict.items() if v is not None and not v.empty}
+    # Filtra apenas as abas relevantes para a geração das Notas Técnicas (evita abas brutas gigabytes/auxiliares)
+    relevant_keywords = ['segreg', 'volumes', 'abastecimento', 'populac', 'tv', 'tspe', 'investimento', 'resumo']
+    
+    valid_sheets = {}
+    for k, v in excel_data_dict.items():
+        if v is None or v.empty:
+            continue
+        k_lower = k.lower()
+        if any(kw in k_lower for kw in relevant_keywords):
+            valid_sheets[k] = v
+
+    # Se nenhuma coincidir por palavra-chave, envia todas
+    if not valid_sheets:
+        valid_sheets = {k: v for k, v in excel_data_dict.items() if v is not None and not v.empty}
+
     total_sheets = len(valid_sheets)
     if total_sheets == 0:
         st.warning("Nenhuma aba com dados encontrada para salvar.")
@@ -147,6 +159,7 @@ def upload_excel_dict_to_supabase(excel_data_dict: dict) -> bool:
     progress_bar = st.progress(0)
     status_text = st.empty()
 
+    success = True
     for idx, (sheet_name, df) in enumerate(valid_sheets.items(), start=1):
         clean_table_name = sheet_name.strip().lower().replace(" ", "_").replace("+", "_")
         clean_table_name = "".join(c for c in clean_table_name if c.isalnum() or c == "_")
@@ -158,9 +171,10 @@ def upload_excel_dict_to_supabase(excel_data_dict: dict) -> bool:
 
         progress_bar.progress(idx / total_sheets)
 
-    status_text.success("🎉 Todas as abas foram enviadas para o Supabase!")
+    status_text.success("🎉 Todas as abas essenciais foram enviadas para o Supabase com sucesso!")
     progress_bar.empty()
     return success
+
 
 
 @st.cache_data(ttl=300)

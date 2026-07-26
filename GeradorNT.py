@@ -2085,95 +2085,87 @@ def main():
     st.markdown("---")
     
     dataframes = None
+    supabase_configured = False
 
     if db_supabase:
-        with st.sidebar.expander("⚡ Banco de Dados Supabase", expanded=False):
-            creds = db_supabase.get_supabase_credentials()
-            if creds.get("db_url"):
-                st.success("Configuração do Supabase encontrada!")
-                if st.button("🔌 Testar Conexão Supabase"):
+        creds = db_supabase.get_supabase_credentials()
+        if creds.get("db_url"):
+            supabase_configured = True
+
+    # PAINEL LATERAL (ADMINISTRADOR COM SENHA)
+    if db_supabase:
+        with st.sidebar.expander("⚙️ Painel de Administração", expanded=False):
+            if supabase_configured:
+                st.success("🟢 Supabase Conectado!")
+                if st.button("🔌 Testar Conexão"):
                     ok, msg = db_supabase.test_supabase_connection()
                     if ok:
                         st.success(msg)
                     else:
                         st.error(msg)
+
+                st.markdown("---")
+                st.subheader("🔑 Acesso do Administrador")
+                
+                # Obtém a senha do st.secrets ou usa a padrão 'compesa2026'
+                admin_pass_secret = None
+                if hasattr(st, "secrets"):
+                    admin_pass_secret = st.secrets.get("ADMIN_PASSWORD", "compesa2026")
+                if not admin_pass_secret:
+                    admin_pass_secret = "compesa2026"
+
+                entered_pass = st.text_input("Digite a Senha de Administrador:", type="password", key="admin_password_input")
+                
+                if entered_pass == admin_pass_secret:
+                    st.success("🔓 Modo Administrador Ativado")
+                    st.subheader("📤 Atualizar Planilha no Banco")
+                    admin_file = st.file_uploader(
+                        "Envie a nova versão do Excel",
+                        type=['xlsx', 'xls'],
+                        key="admin_excel_upload"
+                    )
+                    if admin_file is not None:
+                        admin_dfs = load_excel_file(admin_file)
+                        if st.button("☁️ Substituir Base no Supabase"):
+                            with st.spinner("Atualizando Supabase..."):
+                                if db_supabase.upload_excel_dict_to_supabase(admin_dfs):
+                                    st.success("✅ Nova planilha gravada com sucesso no Supabase!")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                elif entered_pass:
+                    st.error("❌ Senha incorreta.")
+                else:
+                    st.info("🔒 Digite a senha para desbloquear a área de atualização de planilhas.")
             else:
                 st.info("Supabase pendente. Configure em `.streamlit/secrets.toml` ou `.env`.")
 
-    # Opção de Fonte de Dados se o Supabase estiver configurado
-    use_supabase_source = False
-    if db_supabase:
-        creds = db_supabase.get_supabase_credentials()
-        if creds.get("db_url"):
-            data_source = st.radio(
-                "📌 Fonte de Dados dos Investimentos:",
-                options=["📂 Upload de Planilha Excel Local", "☁️ Carregar da Base no Supabase"],
-                horizontal=True
-            )
-            if data_source == "☁️ Carregar da Base no Supabase":
-                use_supabase_source = True
 
-    if use_supabase_source:
-        with st.spinner("⚡ Carregando base de dados do Supabase..."):
+    # FLUXO PRINCIPAL DA TELA (USUÁRIO FINAL)
+    if supabase_configured:
+        col_title, col_reload = st.columns([0.75, 0.25])
+        with col_reload:
+            if st.button("🔄 Recarregar Base"):
+                st.cache_data.clear()
+                st.rerun()
+
+        with st.spinner("⚡ Carregando base de dados..."):
             dataframes = db_supabase.load_all_sheets_from_supabase()
-            if not dataframes:
-                st.warning("Nenhuma tabela encontrada no Supabase. Faça o upload de um arquivo Excel abaixo para enviar a primeira versão.")
-                use_supabase_source = False
 
-    if not use_supabase_source:
+        if not dataframes:
+            st.warning("⚠️ Nenhuma base encontrada no Supabase. Abra o menu '⚙️ Administração' na barra lateral para enviar o primeiro arquivo Excel.")
+    else:
+        # Fallback caso o Supabase não esteja configurado
         uploaded_file = st.file_uploader(
             "📂 Carregue o arquivo Excel localmente",
             type=['xlsx', 'xls'],
-            help="O arquivo deve conter as abas: 'Segreg por município', 'Volumes por município', 'Abastecimento', 'População por município'"
+            help="O arquivo deve conter as abas esperadas"
         )
-
-        raw_excel_file = None
-        upload_complete = False
-
-        if 'downloaded_excel_bytes' in st.session_state and st.session_state['downloaded_excel_bytes']:
-            raw_excel_file = st.session_state['downloaded_excel_bytes']
-        elif uploaded_file is not None:
-            raw_excel_file = uploaded_file
-            upload_complete = True
-
         if uploaded_file is not None:
-            current_name = getattr(uploaded_file, 'name', None) or None
-            if st.session_state.get('last_uploaded_name') != current_name:
-                st.session_state['last_uploaded_name'] = current_name
-                st.session_state['municipios_loaded'] = False
-                st.session_state['show_upload_message'] = True
-
-        upload_msg_ph = st.empty()
-        if (
-            upload_complete
-            and not st.session_state.get('municipios_loaded', False)
-            and st.session_state.get('show_upload_message', True)
-        ):
-            upload_msg_ph.warning(
-                "Upload completo! ✔  Aguarde até que as informações dos municípios sejam carregadas."
-            )
-        else:
-            upload_msg_ph.empty()
-
-        if raw_excel_file is not None:
-            dataframes = load_excel_file(raw_excel_file)
-
-            # Botão para sincronizar a nova planilha enviada com o Supabase
-            if db_supabase and dataframes:
-                creds = db_supabase.get_supabase_credentials()
-                if creds.get("db_url"):
-                    col_sync, col_space = st.columns([0.4, 0.6])
-                    with col_sync:
-                        if st.button("☁️ Salvar/Atualizar esta nova versão no Supabase", help="Substitui os dados antigos no Supabase por esta nova planilha"):
-                            with st.spinner("Atualizando tabelas no Supabase..."):
-                                if db_supabase.upload_excel_dict_to_supabase(dataframes):
-                                    st.success("✅ Base no Supabase atualizada com sucesso!")
-                                    st.cache_data.clear()
-                                else:
-                                    st.error("❌ Falha ao atualizar o Supabase.")
+            dataframes = load_excel_file(uploaded_file)
 
     if dataframes:
         try:
+
 
             
             segreg_sheet = find_sheet_name(dataframes, ['Segreg por município', 'Segreg por municipio', 'Investimentos', 'Investimento'], required_columns=['Status', 'Status', 'Total do Investimento R$ por município', 'Total do Investimento'])
