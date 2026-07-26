@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  gerador-nt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gerador_nt_app
+    ports:
+      - "8501:8501"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_DB_URL=${SUPABASE_DB_URL:-}
+    env_file:
+      - .env
+    volumes:
+      # Mantém imagens/modelos sincronizados se alterados
+      - ./Base NT nítido.png:/app/Base NT nítido.png:ro
+      - ./marcaDaguaCompesa.png:/app/marcaDaguaCompesa.png:ro
+      - ./Modelo_marcaDagua.docx:/app/Modelo_marcaDagua.docx:ro
+    restart: unless-stopped
