@@ -147,3 +147,44 @@ def upload_excel_dict_to_supabase(excel_data_dict: dict) -> bool:
             success = False
 
     return success
+
+
+@st.cache_data(ttl=300)
+def load_all_sheets_from_supabase() -> dict:
+    """
+    Carrega todas as tabelas salvas no Supabase e as converte no dicionário de abas esperado pelo GeradorNT.
+    """
+    engine = get_db_engine()
+    if engine is None:
+        return {}
+
+    table_mapping = {
+        "segreg_por_município": "Segreg por município",
+        "segreg_por_municipio": "Segreg por município",
+        "volumes_por_município": "Volumes por município",
+        "volumes_por_municipio": "Volumes por município",
+        "abastecimento": "Abastecimento",
+        "população_por_município": "População por município",
+        "populacao_por_municipio": "População por município",
+        "tv_tspe": "TV+TSPE",
+        "tvtspe": "TV+TSPE",
+        "investimentos": "Investimentos"
+    }
+
+    loaded_dict = {}
+    try:
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+
+        for raw_table in existing_tables:
+            clean_name = raw_table.lower().strip()
+            sheet_name = table_mapping.get(clean_name, raw_table)
+            df = load_table_from_supabase(raw_table)
+            if not df.empty:
+                loaded_dict[sheet_name] = df
+        return loaded_dict
+    except Exception as e:
+        st.error(f"Erro ao recuperar tabelas do Supabase: {e}")
+        return {}
+

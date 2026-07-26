@@ -2084,6 +2084,8 @@ def main():
     st.title("🏗️ Gerador de Nota Técnica")
     st.markdown("---")
     
+    dataframes = None
+
     if db_supabase:
         with st.sidebar.expander("⚡ Banco de Dados Supabase", expanded=False):
             creds = db_supabase.get_supabase_credentials()
@@ -2098,83 +2100,81 @@ def main():
             else:
                 st.info("Supabase pendente. Configure em `.streamlit/secrets.toml` ou `.env`.")
 
-    # Only local file upload is supported for now
+    # Opção de Fonte de Dados se o Supabase estiver configurado
+    use_supabase_source = False
+    if db_supabase:
+        creds = db_supabase.get_supabase_credentials()
+        if creds.get("db_url"):
+            data_source = st.radio(
+                "📌 Fonte de Dados dos Investimentos:",
+                options=["📂 Upload de Planilha Excel Local", "☁️ Carregar da Base no Supabase"],
+                horizontal=True
+            )
+            if data_source == "☁️ Carregar da Base no Supabase":
+                use_supabase_source = True
 
-    uploaded_file = st.file_uploader(
-        "📂 Carregue o arquivo Excel localmente",
-        type=['xlsx', 'xls'],
-        help="O arquivo deve conter as abas: 'Segreg por município', 'Volumes por município', 'Abastecimento', 'População por município'"
-    )
+    if use_supabase_source:
+        with st.spinner("⚡ Carregando base de dados do Supabase..."):
+            dataframes = db_supabase.load_all_sheets_from_supabase()
+            if not dataframes:
+                st.warning("Nenhuma tabela encontrada no Supabase. Faça o upload de um arquivo Excel abaixo para enviar a primeira versão.")
+                use_supabase_source = False
 
-    # O app suporta apenas upload de arquivo local por enquanto.
-    #     else:
-    #         # try direct download, then try simple URL variants if it fails
-    #         tried = []
-    #         success = False
-    #         candidates = [link_to_use]
-    #         # add variants
-    #         if '?' in link_to_use:
-    #             candidates.append(link_to_use + '&download=1')
-    #         else:
-    #             candidates.append(link_to_use + '?download=1')
-    #         # replace view.aspx with download.aspx (SharePoint heuristic)
-    #         if 'view.aspx' in link_to_use:
-    #             candidates.append(link_to_use.replace('view.aspx', 'download.aspx'))
-
-    #         for candidate in candidates:
-    #             if candidate in tried:
-    #                 continue
-    #             tried.append(candidate)
-    #             try:
-    #                 st.session_state['downloaded_excel_bytes'] = download_excel_file(candidate)
-    #                 st.success(f"Base atualizada com sucesso a partir do link: {candidate}")
-    #                 success = True
-    #                 break
-    #             except Exception as e:
-    #                 # show minor info but continue trying
-    #                 st.info(f"Tentativa falhou para: {candidate} — {e}")
-
-    #         if not success:
-    #             st.error("Não foi possível baixar a planilha a partir do link fornecido. Tente um link de compartilhamento público ou configure um link direto de download.")
-
-    
-
-    raw_excel_file = None
-    upload_complete = False
-
-    # Priority: downloaded bytes in session (from atualizar base) > uploaded file
-    if 'downloaded_excel_bytes' in st.session_state and st.session_state['downloaded_excel_bytes']:
-        raw_excel_file = st.session_state['downloaded_excel_bytes']
-    elif uploaded_file is not None:
-        raw_excel_file = uploaded_file
-        upload_complete = True
-
-    # Reset municipio-loaded flag when a new file is uploaded
-    if uploaded_file is not None:
-        current_name = getattr(uploaded_file, 'name', None) or None
-        if st.session_state.get('last_uploaded_name') != current_name:
-            st.session_state['last_uploaded_name'] = current_name
-            st.session_state['municipios_loaded'] = False
-            # show upload message after a fresh upload; will be cleared when municipio options are shown
-            st.session_state['show_upload_message'] = True
-
-    # Show a persistent upload confirmation until municipalities finish loading
-    upload_msg_ph = st.empty()
-    if (
-        upload_complete
-        and not st.session_state.get('municipios_loaded', False)
-        and st.session_state.get('show_upload_message', True)
-    ):
-        upload_msg_ph.warning(
-            "Upload completo! ✔  Aguarde até que as informações dos municípios sejam carregadas."
+    if not use_supabase_source:
+        uploaded_file = st.file_uploader(
+            "📂 Carregue o arquivo Excel localmente",
+            type=['xlsx', 'xls'],
+            help="O arquivo deve conter as abas: 'Segreg por município', 'Volumes por município', 'Abastecimento', 'População por município'"
         )
-    else:
-        upload_msg_ph.empty()
 
-    if raw_excel_file is not None:
-        try:
-            # Load the Excel file
+        raw_excel_file = None
+        upload_complete = False
+
+        if 'downloaded_excel_bytes' in st.session_state and st.session_state['downloaded_excel_bytes']:
+            raw_excel_file = st.session_state['downloaded_excel_bytes']
+        elif uploaded_file is not None:
+            raw_excel_file = uploaded_file
+            upload_complete = True
+
+        if uploaded_file is not None:
+            current_name = getattr(uploaded_file, 'name', None) or None
+            if st.session_state.get('last_uploaded_name') != current_name:
+                st.session_state['last_uploaded_name'] = current_name
+                st.session_state['municipios_loaded'] = False
+                st.session_state['show_upload_message'] = True
+
+        upload_msg_ph = st.empty()
+        if (
+            upload_complete
+            and not st.session_state.get('municipios_loaded', False)
+            and st.session_state.get('show_upload_message', True)
+        ):
+            upload_msg_ph.warning(
+                "Upload completo! ✔  Aguarde até que as informações dos municípios sejam carregadas."
+            )
+        else:
+            upload_msg_ph.empty()
+
+        if raw_excel_file is not None:
             dataframes = load_excel_file(raw_excel_file)
+
+            # Botão para sincronizar a nova planilha enviada com o Supabase
+            if db_supabase and dataframes:
+                creds = db_supabase.get_supabase_credentials()
+                if creds.get("db_url"):
+                    col_sync, col_space = st.columns([0.4, 0.6])
+                    with col_sync:
+                        if st.button("☁️ Salvar/Atualizar esta nova versão no Supabase", help="Substitui os dados antigos no Supabase por esta nova planilha"):
+                            with st.spinner("Atualizando tabelas no Supabase..."):
+                                if db_supabase.upload_excel_dict_to_supabase(dataframes):
+                                    st.success("✅ Base no Supabase atualizada com sucesso!")
+                                    st.cache_data.clear()
+                                else:
+                                    st.error("❌ Falha ao atualizar o Supabase.")
+
+    if dataframes:
+        try:
+
             
             segreg_sheet = find_sheet_name(dataframes, ['Segreg por município', 'Segreg por municipio', 'Investimentos', 'Investimento'], required_columns=['Status', 'Status', 'Total do Investimento R$ por município', 'Total do Investimento'])
             volumes_sheet = find_sheet_name(dataframes, ['Volumes por município', 'Volumes por municipio', 'Volumes'], required_columns=['Vazão [L/s]', 'Vazao [L/s]', 'Vazão', 'Vazao'])
