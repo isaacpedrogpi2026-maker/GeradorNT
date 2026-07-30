@@ -2158,10 +2158,33 @@ def main():
         uploaded_file = st.file_uploader(
             "📂 Carregue o arquivo Excel localmente",
             type=['xlsx', 'xls'],
-            help="O arquivo deve conter as abas esperadas"
+            help="O arquivo deve conter as abas: 'Segreg por município', 'Volumes por município', 'Abastecimento', 'População por município'"
         )
+
+        raw_excel_file = None
+        upload_complete = False
+
+        if 'downloaded_excel_bytes' in st.session_state and st.session_state['downloaded_excel_bytes']:
+            raw_excel_file = st.session_state['downloaded_excel_bytes']
+        elif uploaded_file is not None:
+            raw_excel_file = uploaded_file
+            upload_complete = True
+
         if uploaded_file is not None:
-            dataframes = load_excel_file(uploaded_file)
+            current_name = getattr(uploaded_file, 'name', None) or None
+            if st.session_state.get('last_uploaded_name') != current_name:
+                st.session_state['last_uploaded_name'] = current_name
+                st.session_state['municipios_loaded'] = False
+                st.session_state['show_upload_message'] = True
+
+        upload_msg_ph = st.empty()
+        if upload_complete and not st.session_state.get('municipios_loaded', False) and st.session_state.get('show_upload_message', True):
+            upload_msg_ph.warning("Upload completo! ✔ Aguarde até que as informações dos municípios sejam carregadas.")
+        else:
+            upload_msg_ph.empty()
+
+        if raw_excel_file is not None:
+            dataframes = load_excel_file(raw_excel_file)
 
     if dataframes:
         try:
@@ -2203,6 +2226,14 @@ def main():
                 st.warning("Selecione um município para gerar a Nota Técnica.")
                 st.stop()
 
+            # Filtro Informar no Relatório
+            informar_option = st.selectbox(
+                "Informar no Relatório",
+                options=["Todos", "Sim", "Não"],
+                index=0,
+                key="informar_no_relatorio_filter"
+            )
+
             filtered_dataframes = {
                 'Segreg por município': filter_by_municipio(resolved_dataframes['Segreg por município'], selected_municipio, 'Segreg por município'),
                 'Volumes por município': filter_by_municipio(resolved_dataframes['Volumes por município'], selected_municipio, 'Volumes por município'),
@@ -2212,32 +2243,12 @@ def main():
                 'Investimentos': filter_by_municipio(resolved_dataframes['Investimentos'], selected_municipio, 'Investimentos')
             }
 
-            informar_option = st.selectbox(
-                "Informar no Relatório",
-                options=["Todos", "Sim", "Não"],
-                index=0,
-                key="informar_no_relatorio_filter"
-            )
-
             dados_gerais, dados_obras, descricao_obras = generate_report(filtered_dataframes, informar_option=informar_option)
 
             total_investment = sum(
                 float(v.get('valor', 0) or 0)
                 for v in dados_obras.values()
             )
-
-            if total_investment <= 0:
-                st.markdown(
-                    f"""
-                    <div style=\"display:flex; justify-content:center; align-items:center; min-height:220px;\">
-                        <div style=\"border:1px solid rgba(0,0,0,0.15); border-radius:20px; padding:28px 36px; background-color:#fff9c4; text-align:center; max-width:980px;\">
-                            <span style=\"font-size:36px; font-weight:700; color:#111; line-height:1.2;\">O Município {selected_municipio} não possui investimentos</span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                st.stop()
 
             st.header(f"📝 Município de {selected_municipio}")
             st.markdown("---")
@@ -2249,9 +2260,21 @@ def main():
             display_dados_gerais(dados_gerais)
             
             st.markdown("---")
-            
-            selected_descricao_obras = display_descricao_obras(descricao_obras, df_segreg)
-            display_dados_obras(dados_obras, selected_descricao_obras)
+
+            st.header("📊 DADOS DAS OBRAS")
+            if total_investment <= 0:
+                st.markdown(f"""
+                <div style="display:flex; justify-content:center; align-items:center; min-height:100px; margin-bottom:20px;">
+                    <div style="border:1px solid rgba(0,0,0,0.15); border-radius:20px; padding:20px 30px; background-color:#fff9c4; text-align:center; max-width:980px;">
+                        <span style="font-size:24px; font-weight:700; color:#111; line-height:1.2;">O Município {selected_municipio} não possui investimentos</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                # Criar dicionário vazio para não quebrar o modelo
+                selected_descricao_obras = {}
+            else:
+                selected_descricao_obras = display_descricao_obras(descricao_obras, df_segreg)
+                display_dados_obras(dados_obras, selected_descricao_obras)
 
             st.markdown("---")
             st.header("📥 Exportar documento")
